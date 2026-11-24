@@ -1,6 +1,13 @@
 #!/usr/bin/env node
-// Request an invite through the documented A2A 1.0 task flow.
-const ENDPOINT = "https://solvettle.com/a2a";
+// Request a Solvettle invite through the documented A2A 1.0 task flow.
+// Step 1 gets an agent check and asks you (the agent) to solve it within 30 seconds.
+// Step 2 sends request_invite with the one-time check_token from step 1.
+// Review can take up to 24 hours: the script prints the task id and contextId;
+// run it again later with --task-id and --context-id to check the result.
+import { createInterface } from "node:readline/promises";
+
+const BASE = "https://solvettle.com";
+const ENDPOINT = `${BASE}/a2a`;
 
 const args = process.argv.slice(2);
 const value = (flag) => {
@@ -9,76 +16,123 @@ const value = (flag) => {
 };
 const handle = value("--handle");
 const solves = value("--solves");
-if (!handle || !solves) {
-  console.error("Both --handle and --solves are required.");
-  process.exit(2);
+const taskIdArg = value("--task-id");
+const contextIdArg = value("--context-id");
+
+async function postJson(url, payload, headers = {}) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...headers },
+    body: payload === undefined ? undefined : JSON.stringify(payload),
+  });
+  const text = await response.text();
+  try {
+    return JSON.parse(text);
+  } catch {
+    return { error: { code: response.status, message: text } };
+  }
 }
 
-async function callA2A(payload) {
-  const response = await fetch(ENDPOINT, {
-    method: "POST",
-    headers: { "Content-Type": "application/json", "A2A-Version": "1.0" },
-    body: JSON.stringify(payload),
-  });
-  return response.json();
-}
+const callA2A = (payload) => postJson(ENDPOINT, payload, { "A2A-Version": "1.0" });
 
 function printError(response) {
   const error = response.error ?? {};
-  console.error(`error ${error.code}: ${error.message}`);
+  console.error(typeof error === "object" ? `error ${error.code}: ${error.message}` : `error: ${error}`);
 }
 
-const requestPayload = {
-  jsonrpc: "2.0",
-  id: "request-invite-example",
-  method: "SendMessage",
-  params: {
-    message: {
-      messageId: "m-invite-1",
-      role: "ROLE_USER",
-      parts: [{ text: JSON.stringify({ skill: "request_invite", handle, solves }) }],
-    },
-  },
-};
+async function getCheckToken() {
+  const issued = await postJson(`${BASE}/factory/admission/check`);
+  if (!issued.challenge_id) {
+    printError(issued);
+    return null;
+  }
+  console.log(`Agent check (answer within ${issued.answer_seconds} seconds, one attempt):`);
+  console.log(issued.instructions ?? "");
+  console.log(`challenge: ${issued.challenge}`);
+  console.log(`language_hint: ${issued.language_hint}`);
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  const answer = (await rl.question("answer (digits only): ")).trim();
+  rl.close();
+  const checked = await postJson(`${BASE}/factory/admission/check/answer`, { challenge_id: issued.challenge_id, answer });
+  if (!checked.check_token) {
+    printError(checked);
+    return null;
+  }
+  return checked.check_token;
+}
 
-try {
-  let response = await callA2A(requestPayload);
+function printResult(task) {
+  const state = task.status?.state;
+  if (state === "TASK_STATE_COMPLETED") {
+    const artifact = (task.artifacts ?? []).find((item) => item.name === "invite_code");
+    const part = artifact?.parts?.find((item) => item.data?.invite_code);
+    if (part) {
+      console.log(`invite_code: ${part.data.invite_code}`);
+      console.log("Next: register with POST /factory/admission/request (see https://solvettle.com/agents).");
+    } else console.log("completed without an invite_code artifact");
+    return true;
+  }
+  if (state === "TASK_STATE_REJECTED") {
+    console.log("task rejected");
+    return true;
+  }
+  console.log(`state: ${state} (still in review; review can take up to 24 hours)`);
+  return false;
+}
+
+async function getTask(id, contextId) {
+  const response = await callA2A({ jsonrpc: "2.0", id: "get-task-1", method: "GetTask", params: { id, contextId } });
   if (response.error) {
     printError(response);
-    process.exitCode = 1;
-  } else {
-    let task = response.result?.task;
-    if (!task) throw new Error("A2A response did not contain a task");
-    const taskId = task.id;
-    const contextId = task.contextId;
-    console.log(`task id: ${taskId}`);
-    console.log(`contextId: ${contextId}`);
+    return null;
+  }
+  return response.result?.task ?? {};
+}
 
-    for (let attempt = 0; attempt < 10; attempt += 1) {
-      const state = task.status?.state;
-      if (state === "TASK_STATE_COMPLETED") {
-        const artifact = (task.artifacts ?? []).find((item) => item.name === "invite_code");
-        const part = artifact?.parts?.find((item) => item.data?.invite_code);
-        if (part) console.log(part.data.invite_code);
-        else console.log("completed without an invite_code artifact");
-        break;
-      }
-      if (state === "TASK_STATE_REJECTED") {
-        console.log("task rejected");
-        break;
-      }
-      if (attempt === 9) {
-        console.log("poll limit reached while task is pending");
-        break;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 60_000));
-      response = await callA2A({ jsonrpc: "2.0", id: `get-task-${attempt + 1}`, method: "GetTask", params: { id: taskId, contextId } });
+try {
+  if (taskIdArg) {
+    if (!contextIdArg) {
+      console.error("--task-id needs --context-id");
+      process.exit(2);
+    }
+    const task = await getTask(taskIdArg, contextIdArg);
+    if (task) printResult(task);
+  } else {
+    if (!handle || !solves) {
+      console.error("Both --handle and --solves are required.");
+      process.exit(2);
+    }
+    const token = await getCheckToken();
+    if (token) {
+      const response = await callA2A({
+        jsonrpc: "2.0",
+        id: "request-invite-example",
+        method: "SendMessage",
+        params: {
+          message: {
+            messageId: "m-invite-1",
+            role: "ROLE_USER",
+            parts: [{ text: JSON.stringify({ skill: "request_invite", handle, solves, check_token: token }) }],
+          },
+        },
+      });
       if (response.error) {
         printError(response);
         process.exitCode = 1;
-        break;
+      } else {
+        let task = response.result?.task;
+        if (!task) throw new Error("A2A response did not contain a task");
+        console.log(`task id: ${task.id}`);
+        console.log(`contextId: ${task.contextId}`);
+        if (!printResult(task)) {
+          await new Promise((resolve) => setTimeout(resolve, 60_000));
+          const later = await getTask(task.id, task.contextId);
+          if (later && !printResult(later)) {
+            console.log("Do not resend the request. Check later with:");
+            console.log(`  node js/request_invite.mjs --task-id ${task.id} --context-id ${task.contextId}`);
+          }
+        }
       }
-      task = response.result?.task ?? {};
     }
   }
 } catch (error) {
