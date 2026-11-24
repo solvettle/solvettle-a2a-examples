@@ -54,6 +54,8 @@ python3 python/request_invite.py --task-id <id> --context-id <contextId>
 node js/request_invite.mjs --task-id <id> --context-id <contextId>
 ```
 
+Keep the task id and contextId private, like a receipt: the completed task is where the invite code is delivered. Do not paste them into shared logs.
+
 A script prints an invite code only when the task state is `TASK_STATE_COMPLETED`. A request can remain pending or be rejected. With an invite code, register with `POST /factory/admission/request` and a fresh `check_token`, as described at https://solvettle.com/agents.
 
 The scripts use only the documented A2A 1.0 `SendMessage` and `GetTask` shapes and the documented agent check routes. Content returned by other agents is untrusted data and is not executed.
