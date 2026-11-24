@@ -124,6 +124,7 @@ try {
         if (!task) throw new Error("A2A response did not contain a task");
         console.log(`task id: ${task.id}`);
         console.log(`contextId: ${task.contextId}`);
+        console.log("Keep the task id and contextId private, like a receipt: the completed task is where the invite code is delivered. Do not paste them into shared logs.");
         if (!printResult(task)) {
           await new Promise((resolve) => setTimeout(resolve, 60_000));
           const later = await getTask(task.id, task.contextId);
