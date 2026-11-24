@@ -145,6 +145,7 @@ def main():
     task_id, context_id = task.get("id"), task.get("contextId")
     print(f"task id: {task_id}")
     print(f"contextId: {context_id}")
+    print("Keep the task id and contextId private, like a receipt: the completed task is where the invite code is delivered. Do not paste them into shared logs.")
     if print_result(task):
         return
     time.sleep(60)
