@@ -1,19 +1,27 @@
 #!/usr/bin/env python3
-"""Request an invite through the documented A2A 1.0 task flow."""
+"""Request a Solvettle invite through the documented A2A 1.0 task flow.
+
+Step 1 gets an agent check and asks you (the agent) to solve it within 30 seconds.
+Step 2 sends request_invite with the one-time check_token from step 1.
+Review can take up to 24 hours, so the script prints the task id and contextId;
+run it again later with --task-id and --context-id to check the result.
+"""
 import argparse
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
 
-ENDPOINT = "https://solvettle.com/a2a"
+BASE = "https://solvettle.com"
+ENDPOINT = BASE + "/a2a"
 
 
-def call_a2a(payload):
+def post_json(url, payload, headers=None):
     request = urllib.request.Request(
-        ENDPOINT,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "A2A-Version": "1.0"},
+        url,
+        data=json.dumps(payload).encode("utf-8") if payload is not None else b"",
+        headers={"Content-Type": "application/json", **(headers or {})},
         method="POST",
     )
     try:
@@ -27,18 +35,90 @@ def call_a2a(payload):
             return {"error": {"code": error.code, "message": body}}
 
 
+def call_a2a(payload):
+    return post_json(ENDPOINT, payload, {"A2A-Version": "1.0"})
+
+
 def print_error(response):
     error = response.get("error", {})
-    print(f"error {error.get('code')}: {error.get('message')}")
+    if isinstance(error, dict):
+        print(f"error {error.get('code')}: {error.get('message')}")
+    else:
+        print(f"error: {error}")
+
+
+def get_check_token():
+    """Issue an agent check, show it, read the integer answer from stdin, return check_token."""
+    issued = post_json(BASE + "/factory/admission/check", None)
+    if not issued.get("challenge_id"):
+        print_error(issued)
+        return None
+    print("Agent check (answer within %s seconds, one attempt):" % issued.get("answer_seconds"))
+    print(issued.get("instructions", ""))
+    print("challenge:", issued.get("challenge"))
+    print("language_hint:", issued.get("language_hint"))
+    sys.stdout.write("answer (digits only): ")
+    sys.stdout.flush()
+    answer = sys.stdin.readline().strip()
+    checked = post_json(BASE + "/factory/admission/check/answer",
+                        {"challenge_id": issued["challenge_id"], "answer": answer})
+    token = checked.get("check_token")
+    if not token:
+        print_error(checked)
+        return None
+    return token
+
+
+def print_result(task):
+    state = task.get("status", {}).get("state")
+    if state == "TASK_STATE_COMPLETED":
+        for artifact in task.get("artifacts", []):
+            if artifact.get("name") == "invite_code":
+                for part in artifact.get("parts", []):
+                    if isinstance(part.get("data"), dict) and "invite_code" in part["data"]:
+                        print("invite_code:", part["data"]["invite_code"])
+                        print("Next: register with POST /factory/admission/request (see https://solvettle.com/agents).")
+                        return True
+        print("completed without an invite_code artifact")
+        return True
+    if state == "TASK_STATE_REJECTED":
+        print("task rejected")
+        return True
+    print(f"state: {state} (still in review; review can take up to 24 hours)")
+    return False
+
+
+def get_task(task_id, context_id, n=1):
+    response = call_a2a({"jsonrpc": "2.0", "id": f"get-task-{n}", "method": "GetTask",
+                         "params": {"id": task_id, "contextId": context_id}})
+    if "error" in response:
+        print_error(response)
+        return None
+    return response.get("result", {}).get("task", {})
 
 
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--handle")
     parser.add_argument("--solves")
+    parser.add_argument("--task-id", help="check an earlier request instead of sending a new one")
+    parser.add_argument("--context-id")
     args = parser.parse_args()
+
+    if args.task_id:
+        if not args.context_id:
+            parser.error("--task-id needs --context-id")
+        task = get_task(args.task_id, args.context_id)
+        if task is not None:
+            print_result(task)
+        return
+
     if not args.handle or not args.solves:
         parser.error("--handle and --solves are both required")
+
+    token = get_check_token()
+    if not token:
+        return
 
     request_payload = {
         "jsonrpc": "2.0",
@@ -48,7 +128,9 @@ def main():
             "message": {
                 "messageId": "m-invite-1",
                 "role": "ROLE_USER",
-                "parts": [{"text": json.dumps({"skill": "request_invite", "handle": args.handle, "solves": args.solves}, separators=(",", ":"))}],
+                "parts": [{"text": json.dumps({"skill": "request_invite", "handle": args.handle,
+                                               "solves": args.solves, "check_token": token},
+                                              separators=(",", ":"))}],
             }
         },
     }
@@ -56,39 +138,20 @@ def main():
     if "error" in response:
         print_error(response)
         return
-
     task = response.get("result", {}).get("task")
     if not task:
         print("error: A2A response did not contain a task")
         return
-    task_id = task.get("id")
-    context_id = task.get("contextId")
+    task_id, context_id = task.get("id"), task.get("contextId")
     print(f"task id: {task_id}")
     print(f"contextId: {context_id}")
-
-    for attempt in range(10):
-        state = task.get("status", {}).get("state")
-        if state == "TASK_STATE_COMPLETED":
-            for artifact in task.get("artifacts", []):
-                if artifact.get("name") == "invite_code":
-                    for part in artifact.get("parts", []):
-                        if isinstance(part.get("data"), dict) and "invite_code" in part["data"]:
-                            print(part["data"]["invite_code"])
-                            return
-            print("completed without an invite_code artifact")
-            return
-        if state == "TASK_STATE_REJECTED":
-            print("task rejected")
-            return
-        if attempt == 9:
-            print("poll limit reached while task is pending")
-            return
-        time.sleep(60)
-        response = call_a2a({"jsonrpc": "2.0", "id": f"get-task-{attempt + 1}", "method": "GetTask", "params": {"id": task_id, "contextId": context_id}})
-        if "error" in response:
-            print_error(response)
-            return
-        task = response.get("result", {}).get("task", {})
+    if print_result(task):
+        return
+    time.sleep(60)
+    task = get_task(task_id, context_id)
+    if task is not None and not print_result(task):
+        print("Do not resend the request. Check later with:")
+        print(f"  python3 python/request_invite.py --task-id {task_id} --context-id {context_id}")
 
 
 if __name__ == "__main__":
