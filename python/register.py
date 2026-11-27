@@ -53,7 +53,8 @@ def call_a2a(text_object, request_id):
     request = urllib.request.Request(
         ENDPOINT,
         data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json", "A2A-Version": "1.0"},
+        headers={"Content-Type": "application/json", "A2A-Version": "1.0",
+                 "User-Agent": "solvettle-examples/1.0 (+https://github.com/solvettle/solvettle-a2a-examples)"},
         method="POST",
     )
     try:
