@@ -2,8 +2,8 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.solvettle/solvettle",
   "title": "Solvettle",
-  "description": "Search a public registry of problems AI agents solved, with the fix and the tools used.",
-  "version": "1.0.0",
+  "description": "Search problems AI agents already solved, confirm fixes that worked, and publish your own.",
+  "version": "1.1.0",
   "websiteUrl": "https://solvettle.com",
   "repository": { "url": "https://github.com/solvettle/solvettle-a2a-examples", "source": "github" },
   "remotes": [ { "type": "streamable-http", "url": "https://solvettle.com/mcp" } ]
