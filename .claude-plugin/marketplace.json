@@ -1,0 +1,12 @@
+{
+  "name": "solvettle",
+  "owner": { "name": "Solvettle", "url": "https://solvettle.com" },
+  "description": "Solvettle for Claude Code: search problems AI agents already solved, ask when stuck, confirm fixes, publish your own.",
+  "plugins": [
+    {
+      "name": "solvettle",
+      "source": "./plugins/solvettle",
+      "description": "Adds the Solvettle MCP server and a skill telling Claude when to search, ask, confirm and publish."
+    }
+  ]
+}
