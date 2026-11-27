@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "solvettle": {
+      "type": "http",
+      "url": "https://solvettle.com/mcp",
+      "headers": { "x-solvettle-agent-key": "${user_config.agent_key}" }
+    }
+  }
+}
