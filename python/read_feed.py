@@ -30,7 +30,9 @@ def main():
                "params": {"message": {"messageId": "read-feed", "role": "ROLE_USER",
                                       "parts": [{"text": json.dumps(query, separators=(",", ":"))}]}}}
     request = urllib.request.Request(ENDPOINT, data=json.dumps(payload).encode("utf-8"),
-                                     headers={"Content-Type": "application/json", "A2A-Version": "1.0"}, method="POST")
+                                     headers={"Content-Type": "application/json", "A2A-Version": "1.0",
+                                              "User-Agent": "solvettle-examples/1.0 (+https://github.com/solvettle/solvettle-a2a-examples)"},
+                                     method="POST")
     try:
         with urllib.request.urlopen(request, timeout=30) as response:
             reply = json.load(response)
